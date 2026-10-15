@@ -1,0 +1,34 @@
+paper:
+  slug: secure-triplet-loss-achieving-cancelability-and-non-linkability-in-end
+  title: "Secure Triplet Loss: Achieving Cancelability and Non-Linkability in End-to-End Deep Biometrics"
+data:
+  celeba_root: ../../datasets/celeba/extracted/celeba
+  lfw_root: ../../datasets/lfw
+  calfw_root: ../../datasets/calfw/extracted/calfw-hf
+  cplfw_root: ../../datasets/cplfw/extracted/cplfw-hf
+  root: ../../datasets/celeba/extracted/celeba
+  train_ratio: 0.7
+  max_images: null
+model:
+  image_size: 112
+  key_dim: 64
+  emb_dim: 128
+  pretrained: true
+train:
+  protocol: full
+  seed: 42
+  num_workers: 4
+  batch_size: 64
+  epochs: 8
+  lr: 0.05
+  margin: 0.5
+  gamma: 0.5
+eval:
+  batch_size: 128
+  max_lfw_pairs: null
+paths:
+  checkpoint_dir: outputs/checkpoints/full
+  log_dir: outputs/logs/full
+  pred_dir: outputs/predictions/full
+  figure_dir: outputs/figures/full
+device: cuda

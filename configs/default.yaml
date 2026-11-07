@@ -11,18 +11,19 @@ data:
   max_images: null
 model:
   image_size: 112
-  key_dim: 64
+  key_dim: 100
   emb_dim: 128
   pretrained: true
 train:
   protocol: full
   seed: 42
   num_workers: 4
-  batch_size: 64
+  batch_size: 32
   epochs: 8
-  lr: 0.05
-  margin: 0.5
-  gamma: 0.5
+  lr: 0.0001
+  weight_decay: 0.001
+  margin: 1.0
+  gamma: 0.9
 eval:
   batch_size: 128
   max_lfw_pairs: null

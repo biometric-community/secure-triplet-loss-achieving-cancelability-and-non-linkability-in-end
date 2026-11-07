@@ -1,4 +1,4 @@
-"""Secure Triplet Loss with cancelability + non-linkability terms."""
+"""Secure Triplet Loss with cancelability + non-linkability terms (Eqs. 3, 4 and 6)."""
 
 from __future__ import annotations
 
@@ -7,45 +7,47 @@ import torch.nn.functional as F
 
 
 def pairwise_dist(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """Squared Euclidean on L2-normalized vectors (= 2 - 2 cos)."""
-    return ((a - b) ** 2).sum(dim=1)
+    """Euclidean distance between matching rows."""
+    return (a - b).norm(dim=1)
 
 
 def secure_triplet_loss(
-    emb_ak: torch.Tensor,
-    emb_pk: torch.Tensor,
-    emb_ak2: torch.Tensor,
-    emb_nk: torch.Tensor,
-    margin: float = 0.5,
-    gamma: float = 0.5,
+    emb_a: torch.Tensor,
+    emb_p1: torch.Tensor,
+    emb_p2: torch.Tensor,
+    emb_n1: torch.Tensor,
+    emb_n2: torch.Tensor,
+    margin: float = 1.0,
+    gamma: float = 0.9,
 ) -> tuple[torch.Tensor, dict]:
     """
-    emb_ak  : anchor with key k
-    emb_pk  : positive (same ID) with same key k
-    emb_ak2 : anchor with different key k'  (cancelability negative)
-    emb_nk  : negative ID with key k
-    gamma   : weight for non-linkability term
+    emb_a  : anchor with key k1
+    emb_p1 : positive (same ID) with key k1
+    emb_p2 : positive (same ID) with key k2
+    emb_n1 : negative ID with key k1
+    emb_n2 : negative ID with key k2
+    gamma  : balance between the triplet and linkability terms (SecureTL w/SL)
     """
-    d_pos = pairwise_dist(emb_ak, emb_pk)
-    d_cancel = pairwise_dist(emb_ak, emb_ak2)
-    d_imp = pairwise_dist(emb_ak, emb_nk)
+    d_sp = pairwise_dist(emb_a, emb_p1)
+    d_dp = pairwise_dist(emb_a, emb_p2)
+    d_sn = pairwise_dist(emb_a, emb_n1)
+    d_dn = pairwise_dist(emb_a, emb_n2)
 
-    loss_c = F.relu(d_pos - d_cancel + margin).mean()
-    loss_i = F.relu(d_pos - d_imp + margin).mean()
+    # Eq. (3): the closest of the three negatives sets the margin
+    d_neg = torch.min(torch.min(d_sn, d_dp), d_dn)
+    loss_stl = F.relu(margin + d_sp - d_neg).mean()
 
-    # Non-linkability: same-ID different-key distances should resemble impostors
-    loss_nl = (d_cancel - d_imp.detach()).pow(2).mean()
-    # Extra cancelability: explicitly maximize d_cancel (cap at 2 for unit sphere)
-    loss_c_aux = F.relu(1.5 - d_cancel).mean()
+    # Eq. (6): key-mismatched distances should not reveal the identity
+    loss_nl = (d_dp.mean() - d_dn.mean()).abs() + (d_dp.std() - d_dn.std()).abs()
 
-    loss = loss_c + loss_i + gamma * loss_nl + 0.5 * loss_c_aux
+    loss = gamma * loss_stl + (1.0 - gamma) * loss_nl
 
     stats = {
-        "d_pos": float(d_pos.mean().detach()),
-        "d_cancel": float(d_cancel.mean().detach()),
-        "d_imp": float(d_imp.mean().detach()),
-        "loss_c": float(loss_c.detach()),
-        "loss_i": float(loss_i.detach()),
+        "d_pos": float(d_sp.mean().detach()),
+        "d_cancel": float(d_dp.mean().detach()),
+        "d_imp": float(d_sn.mean().detach()),
+        "d_dn": float(d_dn.mean().detach()),
+        "loss_stl": float(loss_stl.detach()),
         "loss_nl": float(loss_nl.detach()),
     }
     return loss, stats

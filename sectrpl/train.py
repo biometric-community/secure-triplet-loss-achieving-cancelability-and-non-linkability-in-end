@@ -79,7 +79,7 @@ def train(cfg: dict, device_override: Optional[str] = None) -> Dict:
     max_n = cfg["data"].get("max_images")
     max_n = int(max_n) if max_n is not None else None
     image_size = int(cfg["model"].get("image_size", 112))
-    key_dim = int(cfg["model"].get("key_dim", 64))
+    key_dim = int(cfg["model"].get("key_dim", 100))
     emb_dim = int(cfg["model"].get("emb_dim", 128))
 
     base = CelebAIdDataset(
@@ -102,10 +102,14 @@ def train(cfg: dict, device_override: Optional[str] = None) -> Dict:
     )
 
     model = KeyedFaceNet(key_dim=key_dim, emb_dim=emb_dim, pretrained=True).to(device)
-    opt = torch.optim.SGD(model.parameters(), lr=float(cfg["train"].get("lr", 0.05)), momentum=0.9, weight_decay=5e-4)
+    opt = torch.optim.Adam(
+        model.parameters(),
+        lr=float(cfg["train"].get("lr", 1e-4)),
+        weight_decay=float(cfg["train"].get("weight_decay", 1e-3)),
+    )
     epochs = int(cfg["train"].get("epochs", 8))
-    margin = float(cfg["train"].get("margin", 0.5))
-    gamma = float(cfg["train"].get("gamma", 0.5))
+    margin = float(cfg["train"].get("margin", 1.0))
+    gamma = float(cfg["train"].get("gamma", 0.9))
 
     hist = []
     t0 = time.time()
@@ -123,12 +127,11 @@ def train(cfg: dict, device_override: Optional[str] = None) -> Dict:
             k2 = k2.clone()
             k2[torch.arange(bsz), flip] = -k[torch.arange(bsz), flip]
 
-            emb_ak = model(xa, k)
-            emb_pk = model(xb, k)
-            emb_ak2 = model(xa, k2)
-            emb_nk = model(xn, k)
+            emb_a = model(xa, k)
+            emb_p1, emb_p2 = model(xb, k), model(xb, k2)
+            emb_n1, emb_n2 = model(xn, k), model(xn, k2)
 
-            loss, st = secure_triplet_loss(emb_ak, emb_pk, emb_ak2, emb_nk, margin=margin, gamma=gamma)
+            loss, st = secure_triplet_loss(emb_a, emb_p1, emb_p2, emb_n1, emb_n2, margin=margin, gamma=gamma)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()

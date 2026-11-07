@@ -11,7 +11,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from sectrpl.eval import best_acc_eer, eval_linkability
+from sectrpl.eval import best_acc_eer, dsys, eval_linkability
 from sectrpl.losses.secure_triplet import secure_triplet_loss
 from sectrpl.models.keyed_net import KeyedFaceNet, sample_keys
 
@@ -121,6 +121,14 @@ def test_linkability_mated_pairs_are_different_samples(linkability_calls):
     """Sec. IV-C: mated instances are samples from the same identity, not one image."""
     (image_a, _), (image_b, _) = linkability_calls[:2]
     assert not torch.equal(image_a, image_b)
+
+
+def test_dsys_is_zero_for_identical_and_one_for_separated_scores():
+    """Sec. IV-C: Dsys is 0 for perfect non-linkability and 1 for fully linkable templates."""
+    rng = np.random.RandomState(4)
+    scores = rng.normal(size=20000)
+    assert dsys(scores, scores) == pytest.approx(0.0, abs=1e-9)
+    assert dsys(rng.normal(10.0, 0.1, 5000), rng.normal(0.0, 0.1, 5000)) == pytest.approx(1.0, abs=1e-3)
 
 
 def _norm_cdf(x: float) -> float:

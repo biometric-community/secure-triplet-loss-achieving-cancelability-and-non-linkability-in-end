@@ -48,7 +48,7 @@ def trained():
 
     model = KeyedHead()
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    for _ in range(400):
+    for _ in range(1600):
         xa, xp, xn = batch()
         k1, k2 = sample_keys(64, KEY, device), sample_keys(64, KEY, device)
         templates = (model(xa, k1), model(xp, k1), model(xp, k2), model(xn, k1), model(xn, k2))
@@ -81,7 +81,7 @@ def test_templates_match_only_with_identity_and_key(trained):
 def test_key_mismatch_hides_identity(trained):
     """Sec. III-C: dDP and dDN should assume similar values.
 
-    The authors' loss, Eqs. (3), (4) and (6), reaches a gap of about 0.14 on this task.
+    Eqs. (3), (4) and (6) reach a gap of 0.05 to 0.12 on this task with unit-norm keys.
     """
     d = distances(trained)
     assert abs(d["same_id_diff_key"] - d["diff_id_diff_key"]) <= 0.2

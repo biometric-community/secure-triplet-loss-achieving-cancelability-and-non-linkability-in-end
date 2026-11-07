@@ -34,18 +34,38 @@ def _device(cfg: dict, override: Optional[str] = None) -> torch.device:
     return torch.device(name)
 
 
+def equal_error_rate(scores: np.ndarray, labels: np.ndarray) -> float:
+    """Error rate at the threshold where FMR and FNMR are closest."""
+    mated = labels[np.argsort(scores)] == 1
+    if mated.all() or not mated.any():
+        return 1.0
+    fnmr = np.cumsum(mated) / mated.sum()
+    fmr = 1.0 - np.cumsum(~mated) / (~mated).sum()
+    i = int(np.argmin(np.abs(fmr - fnmr)))
+    return float(0.5 * (fmr[i] + fnmr[i]))
+
+
 def best_acc_eer(scores: np.ndarray, labels: np.ndarray) -> Tuple[float, float]:
     thresholds = np.linspace(scores.min(), scores.max(), 200)
-    best_acc, best_eer = 0.0, 1.0
+    best_acc = 0.0
     for t in thresholds:
         pred = (scores >= t).astype(np.int32)
         best_acc = max(best_acc, float((pred == labels).mean()))
-        pos, neg = labels == 1, labels == 0
-        if pos.any() and neg.any():
-            fpr = float((pred[neg] == 1).mean())
-            fnr = float((pred[pos] == 0).mean())
-            best_eer = min(best_eer, 0.5 * (fpr + fnr))
-    return best_acc, best_eer
+    return best_acc, equal_error_rate(scores, labels)
+
+
+def dsys(mated: np.ndarray, non_mated: np.ndarray, bins: int = 50) -> float:
+    """Global linkability Dsys (Eqs. 7-8 of Sec. IV-C): 0 is unlinkable, 1 fully linkable."""
+    lo = float(min(mated.min(), non_mated.min()))
+    hi = float(max(mated.max(), non_mated.max()))
+    if hi <= lo:
+        return 0.0
+    p_m, edges = np.histogram(mated, bins=bins, range=(lo, hi), density=True)
+    p_n, _ = np.histogram(non_mated, bins=bins, range=(lo, hi), density=True)
+    lr = np.divide(p_m, p_n, out=np.full_like(p_m, np.inf), where=p_n > 0)
+    lr[p_m == 0] = 0.0
+    local = np.where(lr > 1.0, 2.0 * (1.0 / (1.0 + np.exp(-(np.minimum(lr, 700.0) - 1.0))) - 0.5), 0.0)
+    return float((local * p_m).sum() * (edges[1] - edges[0]))
 
 
 @torch.no_grad()
@@ -96,13 +116,13 @@ def eval_cancelability(model, ds, device, key_dim, batch_size, nw) -> Dict:
 @torch.no_grad()
 def eval_linkability(model, ds, device, key_dim, batch_size, nw) -> Dict:
     """
-    Compare score distributions:
-      - mated different-key (same image, k vs k')
-      - impostor same-key (different images from LFW negatives)
-    Lower D_sys-style gap ≈ better unlinkability. We report |mean_mated_diffkey - mean_imp|.
+    Compare score distributions under different keys (Sec. IV-C):
+      - mated: samples of the same identity
+      - non-mated: samples of different identities
+    Reports Dsys and |mean_mated - mean_non_mated|.
     """
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=nw)
-    mated_diff, impostor = [], []
+    mated, non_mated = [], []
     model.eval()
     for a, b, y in tqdm(loader, desc="link", leave=False):
         a, b, y = a.to(device), b.to(device), y.to(device)
@@ -111,26 +131,25 @@ def eval_linkability(model, ds, device, key_dim, batch_size, nw) -> Dict:
         flip = torch.randint(0, key_dim, (a.size(0),), device=device)
         k2 = k2.clone()
         k2[torch.arange(a.size(0)), flip] = -k1[torch.arange(a.size(0)), flip]
-        # mated diff-key on image a
-        ea1, ea2 = model(a, k1), model(a, k2)
-        mated_diff.append((ea1 * ea2).sum(dim=1).cpu().numpy())
-        # impostor: use negative pairs with same key
-        mask = y == 0
-        if mask.any():
-            ea = model(a[mask], k1[mask])
-            eb = model(b[mask], k1[mask])
-            impostor.append((ea * eb).sum(dim=1).cpu().numpy())
-    md = np.concatenate(mated_diff)
-    imp = np.concatenate(impostor) if impostor else np.array([0.0])
-    gap = float(abs(md.mean() - imp.mean()))
+        for mask, scores in ((y == 1, mated), (y == 0, non_mated)):
+            if mask.any():
+                ea, eb = model(a[mask], k1[mask]), model(b[mask], k2[mask])
+                scores.append((ea * eb).sum(dim=1).cpu().numpy())
+    md = np.concatenate(mated) if mated else np.array([0.0])
+    nm = np.concatenate(non_mated) if non_mated else np.array([0.0])
+    gap = float(abs(md.mean() - nm.mean()))
     out = {
         "mated_diffkey_mean": float(md.mean()),
-        "impostor_mean": float(imp.mean()),
+        "non_mated_diffkey_mean": float(nm.mean()),
         "abs_mean_gap": gap,
+        "dsys": dsys(md, nm),
         "n_mated": int(len(md)),
-        "n_imp": int(len(imp)),
+        "n_non_mated": int(len(nm)),
     }
-    print(f"[link] mated_dk={out['mated_diffkey_mean']:.4f} imp={out['impostor_mean']:.4f} gap={gap:.4f}")
+    print(
+        f"[link] mated={out['mated_diffkey_mean']:.4f} non_mated={out['non_mated_diffkey_mean']:.4f} "
+        f"gap={gap:.4f} dsys={out['dsys']:.4f}"
+    )
     return out
 
 

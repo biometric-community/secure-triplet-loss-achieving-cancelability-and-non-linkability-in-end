@@ -34,5 +34,6 @@ class KeyedFaceNet(nn.Module):
 
 
 def sample_keys(n: int, key_dim: int, device: torch.device) -> torch.Tensor:
-    """Random bipolar keys in {-1, +1}^d (BioHash-style)."""
-    return torch.randint(0, 2, (n, key_dim), device=device, dtype=torch.float32) * 2 - 1
+    """Random binary keys, scaled to unit l2 norm (Sec. IV)."""
+    keys = torch.randint(0, 2, (n, key_dim), device=device, dtype=torch.float32) * 2 - 1
+    return keys / key_dim**0.5
